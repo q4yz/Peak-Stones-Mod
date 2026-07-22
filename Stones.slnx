@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/Stones/Stones.csproj" />
+    <Project Path="src/Stones/Stones.csproj">
+      <Deploy Solution="Release|*" />
+    </Project>
   </Folder>
 </Solution>

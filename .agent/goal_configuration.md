@@ -1,10 +1,10 @@
 # Goal: Configuration & Integration
 
 ## Progress Checklist
-- [ ] Define required mod variables (MaxStones, EventInterval, DamageThreshold, etc.).
-- [ ] Bind variables to BepInEx config file (`Config.Bind`).
+- [x] Define required mod variables (MaxStones, EventInterval, DamageThreshold, etc.).
+- [x] Bind variables to BepInEx config file (`Config.Bind`).
 - [ ] Attempt native menu injection via Harmony (Investigate UI drawing loop if necessary).
-- [ ] **Fallback accepted:** Utilize BepInEx ConfigurationManager for the in-game (F1) UI.
+- [x] **Fallback accepted:** Utilize BepInEx ConfigurationManager for the in-game (F1) UI.
 - [ ] Verify settings persist and update dynamically during runtime.
 
 ## Implementation Suggestions

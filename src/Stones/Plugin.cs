@@ -1,285 +1,471 @@
+using System;
 using BepInEx;
 using BepInEx.Logging;
-using BepInEx.Configuration;
 using HarmonyLib;
+using PEAKLib.Core;
+using PEAKLib.Items;
+using PEAKLib.Items.UnityEditor;
 using UnityEngine;
-using System.Collections;
-using System.IO; // Required for Path combining
-using Photon.Pun; // Required for Network Pool
-
 
 namespace Stones;
 
+/// <summary>
+/// Entry point for the Stones BepInEx mod. Owns lifecycle (Awake/Update),
+/// config binding, PEAKLib bundle/content registration, Harmony patching,
+/// and keyboard input dispatch (F2 / F3 / F4).
+///
+/// <para>
+/// <b>Item registration.</b> All four stone tiers (Pebble, Rock, Boulder, LargeBoulder)
+/// are authored in the Unity Editor dummy project as
+/// <c>UnityItemContent</c> ScriptableObjects (each holding a GameObject
+/// <c>ItemPrefab</c> with baked-in size, mass, collider, and rigidbody),
+/// packed into <c>stones.peakbundle</c>, and registered at runtime via the
+/// official <c>PEAKLib.Items</c> pipeline: PEAKLib's <c>BundleLoader</c>
+/// opens the bundle, we look up each <c>UnityItemContent</c> by name,
+/// attach <see cref="StoneBehavior"/> to its <c>ItemPrefab</c>, then call
+/// <c>peakBundle.Mod.RegisterContent()</c> to register every
+/// <c>IContent</c> in the bundle (the four <c>UnityItemContent</c>
+/// assets plus any <c>UnityModDefinition</c>).
+/// PEAKLib owns insertion into the native item database and Photon's
+/// <c>DefaultPool.ResourceCache</c>. This plugin never touches those
+/// collections directly — and never reflects on
+/// <c>Item.ALL_ACTIVE_ITEMS</c>, calls runtime <c>AddComponent&lt;Item&gt;()</c>,
+/// or pokes Photon's prefab pool.
+/// </para>
+///
+/// <para>
+/// <b>No runtime randomization.</b> Sizes and masses live on the prefabs
+/// themselves, so there is no loopback RPC for scale or mass — every
+/// clone simply inherits the authored values via Unity serialization.
+/// </para>
+/// </summary>
 [BepInAutoPlugin]
+[BepInDependency(CorePlugin.Id)]
+[BepInDependency(ItemsPlugin.Id)]
 public partial class Plugin : BaseUnityPlugin
 {
     internal static ManualLogSource logger { get; private set; } = null!;
-    
-    public static ConfigEntry<int> MaxStones { get; private set; } = null!;
-    public static ConfigEntry<float> SpawnRadius { get; private set; } = null!;
-    
-    public static ConfigEntry<bool> EnableVolcanoEvent { get; private set; } = null!;
-    public static ConfigEntry<float> VolcanoEventInterval { get; private set; } = null!;
-    public static ConfigEntry<float> StoneRainDropRate { get; private set; } = null!;
-    public static ConfigEntry<float> StoneDamageThreshold { get; private set; } = null!;
+    private const string HarmonyId = "q4y.Stones";
 
-    private bool hasLoadedWorld = false;
-    private bool isRaining = false;
+    /// <summary>
+    /// Cached mod GUID (BepInPlugin metadata). Set in <see cref="Awake"/>
+    /// so <see cref="ItemSpawnHelper"/> can construct the full Photon
+    /// prefab key without an instance reference.
+    /// </summary>
+    internal static string ModId { get; private set; } = null!;
+
+    /// <summary>
+    /// AssetBundle filename as packed by the Unity Editor. Resolved at
+    /// runtime relative to <see cref="Paths.PluginPath"/>.
+    /// </summary>
+    private const string BundleFileName = "stones.peakbundle";
+    
+    /// <summary>
+    /// Debug mode for F2: <c>-1</c> = spawn all four tiers next to each
+    /// other; <c>0</c>/<c>1</c>/<c>2</c>/<c>3</c> = spawn only that single
+    /// tier (Pebble/Rock/Boulder/LargeBoulder). Toggled with F4.
+    /// </summary>
+    private int debugTierIndex = -1;
+
+    /// <summary>
+    /// Per-tier metadata used by the F2 / F4 debug hotkeys and by
+    /// <see cref="ItemSpawnHelper.SpawnRandomStone"/> to pick a random
+    /// stone tier.
+    ///
+    /// <para>
+    /// Each tier carries <b>two distinct identifiers</b>:
+    /// <list type="bullet">
+    /// <item><see cref="StoneTier.ContentName"/> – the name of the
+    /// <c>UnityItemContent</c> ScriptableObject as packed into the bundle.
+    /// Used to look the asset up via
+    /// <c>peakBundle.LoadAsset&lt;UnityItemContent&gt;(...)</c>.</item>
+    /// <item><see cref="StoneTier.PrefabName"/> – the name of the
+    /// underlying GameObject <c>ItemPrefab</c> (e.g. <c>"rock"</c>).
+    /// PEAKLib mutates that GameObject to
+    /// <c>"{mod.Id}:{PrefabName}"</c> during registration and exposes
+    /// it under <c>"0_Items/{mod.Id}:{PrefabName}"</c> in Photon's
+    /// <c>DefaultPool</c>; <see cref="ItemSpawnHelper.SpawnStone"/>
+    /// reconstructs that full key at spawn time.</item>
+    /// </list>
+    /// Mixing these up is the cause of the historic
+    /// <c>DefaultPool failed to load "0_Items/q4y.Stones:RockContent"</c>
+    /// NullReferenceException: the spawned instance was being requested
+    /// under the ScriptableObject name rather than the GameObject name.
+    /// </para>
+    ///
+    /// <para>
+    /// Sizes and masses are baked into each prefab in the Unity Editor,
+    /// so this struct no longer carries per-tier scale / mass fields —
+    /// every clone inherits the authored values via Unity serialization,
+    /// and no loopback RPC is required.
+    /// </para>
+    ///
+    /// <para>
+    /// The authoritative itemID is assigned by
+    /// <c>PEAKLib.Items.ItemRegistrar.FinishRegisterItem</c> as
+    /// <c>MD5(mod.Id + item.name).ToUInt16()</c>; this table's
+    /// <see cref="StoneTier.ItemId"/> field is just a legacy debug tag.
+    /// </para>
+    /// </summary>
+    internal static readonly StoneTier[] StoneTiers =
+    {
+        new StoneTier("PebbleContent",  "Item_Small_Stone",  (ushort)2001),
+        new StoneTier("RockContent",    "Item_Medium_Stone",    (ushort)2002),
+        new StoneTier("BoulderContent", "Item_Big_Stone", (ushort)2003),
+        new StoneTier("LargeBoulderContent", "Item_Very_Big_Stone", (ushort)2004),
+    };
+
     private void Awake()
     {
         logger = Logger;
-        logger.LogInfo($"Plugin Stones is loaded!");
-        
-        AddConfigs();
-        LoadAssetBundle();
+        ModId = Info.Metadata.GUID;
+        logger.LogInfo($"Plugin Stones is loaded! (GUID = {ModId})");
 
-        Harmony.CreateAndPatchAll(typeof(Plugin));
+        StonesConfig.Bind(Config);
 
-        
-        PrintAllItems();
+        // Inject display names into the game's localization table BEFORE
+        // any item can be displayed in the UI. Idempotent - safe to call
+        // on every Awake even if PEAK already populated the key. See
+        // Localization.cs for the per-tier 13-entry list.
+        Localization.CILocalization();
+
+        // PatchAll(typeof(Assembly)) discovers every [HarmonyPatch] class in
+        // the assembly - required so StoneHarmonyPatches gets applied.
+        new Harmony(HarmonyId).PatchAll(typeof(Plugin).Assembly);
+
+        VulcanStormManager.EnsureInstance();
+
+        // PEAKLib's BundleLoader extension: invokes the callback once the
+        // AssetBundle has been opened and is safe to query. Inside the
+        // callback we attach StoneBehavior to each UnityItemContent's
+        // ItemPrefab, then peakBundle.Mod.RegisterContent() registers every
+        // IContent in the bundle (native item DB + Photon's DefaultPool).
+        this.LoadBundleWithName(BundleFileName, RegisterStonesContent);
     }
-    
-    
-    private void LoadAssetBundle()
+
+    /// <summary>
+    /// Called by <c>PEAKLib.Core.BundleLoader.LoadBundleWithName</c>
+    /// after <c>stones.peakbundle</c> finishes loading. Loads each
+    /// <c>UnityItemContent</c> ScriptableObject by name, attaches
+    /// <see cref="StoneBehavior"/> to its <c>ItemPrefab</c> if missing,
+    /// then registers every <c>IContent</c> in the bundle via
+    /// <c>peakBundle.Mod.RegisterContent()</c>.
+    ///
+    /// <para>
+    /// After this method returns, PEAKLib owns insertion into the
+    /// native item database and Photon's <c>DefaultPool.ResourceCache</c>.
+    /// We do NOT poke either of those collections ourselves.
+    /// </para>
+    /// </summary>
+    private void RegisterStonesContent(PeakBundle peakBundle)
     {
-        string bundlePath = Path.Combine(Paths.PluginPath, "cubestone");
-        
-        if (!File.Exists(bundlePath))
+        logger.LogInfo($"[Stones] Registering stone content from '{BundleFileName}'...");
+
+        foreach (StoneTier tier in StoneTiers)
         {
-            logger.LogError($"Could not find AssetBundle at: {bundlePath}");
+            // Load the UnityItemContent ScriptableObject by its asset
+            // name (ContentName). The GameObject name (PrefabName) is the
+            // one PEAKLib later mutates and registers to Photon - we do
+            // not look the prefab up by it here.
+            UnityItemContent content = peakBundle.LoadAsset<UnityItemContent>(tier.ContentName);
+            if (content == null)
+            {
+                logger.LogError(
+                    $"[Stones] UnityItemContent '{tier.ContentName}' not found in bundle '" +
+                    BundleFileName + "'. Re-author the asset in the Unity Editor " +
+                    "and re-export the bundle.");
+                continue;
+            }
+
+            AttachStoneBehavior(content, tier.ContentName);
+        }
+
+        // PEAKLib registers every IContent ScriptableObject in the bundle:
+        // the three UnityItemContent assets above, plus any UnityModDefinition.
+        // This single call inserts items into the native ItemDatabase,
+        // assigns hash-based itemIDs, and registers Photon prefabs under
+        // "0_Items/{mod.Id}:{item.name}".
+        peakBundle.Mod.RegisterContent();
+
+        logger.LogInfo("[Stones] PEAKLib content registration batch complete.");
+    }
+
+    /// <summary>
+    /// Attaches <see cref="StoneBehavior"/> to the content's
+    /// <c>ItemPrefab</c> if it isn't already present. The behavior owns
+    /// the kinetic-energy combat hook (<c>OnCollisionEnter</c>); size
+    /// and mass are baked into each prefab in the Unity Editor and need
+    /// no runtime broadcasting.
+    /// </summary>
+    /// <param name="content">The <c>UnityItemContent</c> loaded from the bundle.</param>
+    /// <param name="contentName">
+    /// <c>UnityItemContent.name</c> as authored in the Unity Editor.
+    /// Used only as a diagnostic label in the log message.
+    /// </param>
+    private static void AttachStoneBehavior(UnityItemContent content, string contentName)
+    {
+        if (content == null) return;
+
+        GameObject prefab = content.ItemPrefab;
+        if (prefab == null)
+        {
+            logger.LogError(
+                $"[Stones] UnityItemContent '{contentName}' has no ItemPrefab assigned. " +
+                "Re-author the asset in the Unity Editor.");
             return;
         }
 
-        AssetBundle bundle = AssetBundle.LoadFromFile(bundlePath);
-        GameObject rawPrefab = bundle.LoadAsset<GameObject>("Cube");
-        
-        if (rawPrefab != null)
+        if (prefab.GetComponent<StoneBehavior>() == null)
         {
-            GameObject networkedPrefab = UnityEngine.Object.Instantiate(rawPrefab);
-            networkedPrefab.name = "Cube"; 
-
-// Prevent it from being destroyed when loading new maps
-            UnityEngine.Object.DontDestroyOnLoad(networkedPrefab);
-
-// THE FIX: Move the master prefab far underground instead of deactivating it!
-            networkedPrefab.transform.position = new Vector3(0f, -9999f, 0f);
-
-// 2. Attach the REAL PhotonView natively from the game's assembly
-            PhotonView pv = networkedPrefab.AddComponent<PhotonView>();
-
-            // 3. Register our modified clone to the network pool
-            DefaultPool pool = PhotonNetwork.PrefabPool as DefaultPool;
-            if (pool != null && !pool.ResourceCache.ContainsKey("Cube"))
-            {
-                pool.ResourceCache.Add("Cube", networkedPrefab);
-                logger.LogInfo("Successfully registered custom 'Cube' prefab to the network!");
-            }
-        }
-        else
-        {
-            logger.LogError("Failed to extract 'Cube' from the AssetBundle!");
+            prefab.AddComponent<StoneBehavior>();
+            logger.LogInfo($"[Stones] Attached StoneBehavior to '{contentName}' ItemPrefab.");
         }
     }
-
-    
-
-    private void AddConfigs()
-    {
-        MaxStones = Config.Bind("1. Spawning", "MaxStones", 50, "The maximum number of items allowed in the world.");
-        SpawnRadius = Config.Bind("1. Spawning", "SpawnRadius", 150f, "How far out from the center of the map items can spawn.");
-        
-        EnableVolcanoEvent = Config.Bind("2. Events", "EnableVolcanoEvent", true, "Set to true to allow random volcanic eruptions.");
-        VolcanoEventInterval = Config.Bind("2. Events", "VolcanoEventInterval", 300.0f, "How often (in seconds) the volcano erupts. Default is 300.");
-        StoneRainDropRate = Config.Bind("2. Events", "StoneRainDropRate", 0.5f, "How fast the stones fall during the rain.");
-        
-        StoneDamageThreshold = Config.Bind("3. Combat", "StoneDamageThreshold", 10.0f, "How fast a stone must be traveling to deal damage to a player.");
-    }
-    
-   
 
     private void Update()
     {
-       
-        // Listen for the F2 key
-        if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F2))
+        if (Input.GetKeyDown(KeyCode.F2)) HandleF2();
+        if (Input.GetKeyDown(KeyCode.F3)) HandleF3();
+        //if (Input.GetKeyDown(KeyCode.F4)) HandleF4();
+        
+        // Press F5 to log your current coordinates to the BepInEx console
+        if (Input.GetKeyDown(KeyCode.F4))
         {
-            logger.LogInfo("F2 pressed! Attempting to spawn Coconut and Cube...");
-
             if (Player.localPlayer != null && Player.localPlayer.character != null)
             {
-                Transform playerTransform = Player.localPlayer.character.transform;
-        
-                // Base height 5 units in the air
-                Vector3 basePos = playerTransform.position + new Vector3(0f, 5f, 0f);
-        
-                // Offset the Coconut to the left and the Cube to the right
-                Vector3 coconutPos = basePos + (playerTransform.right * -1.5f);
-                Vector3 cubePos = basePos + (playerTransform.right * 1.5f);
-                
-                UnityEngine.Vector3 spawnPos = playerTransform.position + (playerTransform.forward * 2f) + (UnityEngine.Vector3.up * 1f);
-
-                logger.LogInfo($"Spawning Coconut at: {coconutPos}");
-                // IMPORTANT: Change "Coconut" back to whatever the exact string was originally!
-                Photon.Pun.PhotonNetwork.Instantiate("0_Items/Item_Coconut", spawnPos, UnityEngine.Quaternion.identity, 0);
-        
-                logger.LogInfo($"Spawning custom Cube at: {cubePos}");
-                Photon.Pun.PhotonNetwork.Instantiate("Cube", spawnPos, Quaternion.identity, 0);
-        
-                logger.LogInfo("Both instantiation commands sent to Photon!");
+                Vector3 playerPos = Player.localPlayer.character.Center;
+                Plugin.logger.LogInfo($"[Stones] DEBUG F5: Player Center is exactly at X={playerPos.x:F2}, Y={playerPos.y:F2}, Z={playerPos.z:F2}");
             }
-            else
+            else if (Camera.main != null)
             {
-                logger.LogWarning("Spawn failed: Local player or character is null! Are you fully loaded into a map?");
+                Vector3 camPos = Camera.main.transform.position;
+                Plugin.logger.LogInfo($"[Stones] DEBUG F5: Camera is exactly at X={camPos.x:F2}, Y={camPos.y:F2}, Z={camPos.z:F2}");
             }
         }
         
-        if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F3))
-        {
-            if (EnableVolcanoEvent.Value && !isRaining)
-            {
-                if (Player.localPlayer != null && Player.localPlayer.character != null)
-                {
-                    logger.LogInfo("F3 Pressed: Starting Volcano Rain Coroutine!");
-                    StartCoroutine(VolcanoRainRoutine());
-                }
-            }
-            else if (isRaining)
-            {
-                logger.LogWarning("It is already raining stones! Wait for the event to finish.");
-            }
-        }
         
-        if (!hasLoadedWorld && Photon.Pun.PhotonNetwork.InRoom && Photon.Pun.PhotonNetwork.IsMasterClient)
-        {
-            // Make sure the local player character has actually loaded into the scene
-            if (Player.localPlayer != null && Player.localPlayer.character != null)
-            {
-                OnLoadingWorld();
-                hasLoadedWorld = true; // Set flag to true so this never runs again
-            }
-        }
+        
     }
-    
-    private IEnumerator VolcanoRainRoutine()
+
+    /// <summary>
+    /// Master-client-only F2 debug spawn. Layout depends on
+    /// <see cref="debugTierIndex"/>:
+    ///
+    /// <list type="bullet">
+    /// <item><c>-1</c>: a random stone on the left + the full
+    /// Pebble + Rock + Boulder + LargeBoulder row on the right.</item>
+    /// <item><c>0/1/2/3</c>: a random stone on the left + the explicitly
+    /// chosen tier (<see cref="StoneTier.PrefabName"/>) on the right.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// <b>Random stone replaces coconut.</b> The F2 debug key used to
+    /// drop a vanilla <c>Item_Coconut</c> as a sentinel; we now drop a
+    /// randomly-tiered mod stone via
+    /// <see cref="ItemSpawnHelper.SpawnRandomStone"/> instead, so the
+    /// debug row exercises the same PEAKLib registration path that the
+    /// mod ships with.
+    /// </para>
+    /// </summary>
+    private void HandleF2()
     {
-        isRaining = true;
-        
-        logger.LogInfo("Volcano Event Triggered: The earth shakes and the sky turns red!");
-
-        // Temporarily change the ambient light to red for atmosphere
-        Color originalAmbient = RenderSettings.ambientLight;
-        RenderSettings.ambientLight = Color.red;
-
-        // --- NEW: SCREEN SHAKE LOGIC ---
-        // Grab the main camera to shake it
-        Camera mainCam = Camera.main;
-        if (mainCam != null)
+        if (Player.localPlayer == null || Player.localPlayer.character == null)
         {
-            // Save the original position so we can snap it back later
-            Vector3 originalCamPos = mainCam.transform.localPosition;
-            float shakeDuration = 2.0f;  // Shake lasts for 2 seconds
-            float shakeMagnitude = 0.3f; // How violent the shake is
-            float elapsed = 0.0f;
+            logger.LogWarning("F2: Local player or character is null - not in a map?");
+            return;
+        }
 
-            // Loop every frame until the shake duration is over
-            while (elapsed < shakeDuration)
+        Vector3 playerVektor = Player.localPlayer.character.Center;
+        // Player-local right vector - replaces the Vector3.right workaround
+        // so the F2 row stays perpendicular to whichever way the player faces.
+        Vector3 playerRight = Player.localPlayer.character.transform.right;
+
+        // Chest height so all spawned items are visible right in front of the camera.
+        Vector3 chestPos = playerVektor + Vector3.up * 1f;
+
+        if (debugTierIndex < 0)
+        {
+            // All-four mode: random stone (left) + Pebble/Rock/Boulder/LargeBoulder row (right).
+            logger.LogInfo(
+                "F2 pressed! Spawning one random stone + all four tiers " +
+                "(Pebble, Rock, Boulder, LargeBoulder) in a row...");
+
+            Vector3 randomPos = chestPos + playerRight * -3.0f;
+            GameObject? randomStone = ItemSpawnHelper.SpawnRandomStone(randomPos, Quaternion.identity);
+            if (randomStone == null)
             {
-                float x = UnityEngine.Random.Range(-1f, 1f) * shakeMagnitude;
-                float y = UnityEngine.Random.Range(-1f, 1f) * shakeMagnitude;
-
-                // Apply the random offset to the camera
-                mainCam.transform.localPosition = new Vector3(originalCamPos.x + x, originalCamPos.y + y, originalCamPos.z);
-
-                elapsed += Time.deltaTime;
-                yield return null; // Wait exactly one frame before looping again
+                logger.LogError(
+                    "[Stones] SpawnRandomStone returned null - none of the stone " +
+                    "tiers are registered by PEAKLib?");
+                return;
             }
+            ItemSpawnHelper.LogSpawned("F2 (random)", randomStone, randomPos);
 
-            // Snap the camera back to perfectly center when the shake is done
-            mainCam.transform.localPosition = originalCamPos;
+            SpawnStoneRow(chestPos, playerVektor, playerRight);
         }
         else
         {
-            logger.LogWarning("Could not find Camera.main for screen shake!");
-        }
+            // Single-tier mode: random stone (left) + chosen tier (right).
+            var tier = StoneTiers[debugTierIndex];
+            logger.LogInfo(
+                $"F2 pressed! Spawning random stone + tier '{tier.PrefabName}' " +
+                $"(mode = {debugTierIndex}). Press F4 to cycle back to all-four mode.");
 
-        // --- NEW: THE 5 SECOND DELAY ---
-        logger.LogInfo("Eruption building... Waiting 5 seconds...");
-        yield return new WaitForSeconds(5.0f);
-        
-        logger.LogInfo("Incoming!!!");
-
-        // How many items drop during the event (you can make this a config setting later!)
-        int itemsToDrop = 20;
-
-        for (int i = 0; i < itemsToDrop; i++)
-        {
-            // Always get the player's current position so the rain follows them if they run
-            UnityEngine.Transform playerTransform = Player.localPlayer.character.transform;
-            
-            // Pick a random spot in a 25-meter radius around the player
-            float randomOffsetX = UnityEngine.Random.Range(-25f, 25f);
-            float randomOffsetZ = UnityEngine.Random.Range(-25f, 25f);
-            
-            // Spawn height is 40 meters straight up in the air
-            UnityEngine.Vector3 rainSpawnPos = playerTransform.position + new UnityEngine.Vector3(randomOffsetX, 40f, randomOffsetZ);
-
-            Photon.Pun.PhotonNetwork.Instantiate("0_Items/Item_Coconut", rainSpawnPos, UnityEngine.Random.rotation, 0);
-            
-            // Pause the loop based on your config setting before dropping the next one
-            yield return new WaitForSeconds(StoneRainDropRate.Value);
-        }
-
-        // Clean up the event
-        RenderSettings.ambientLight = originalAmbient;
-        isRaining = false;
-        logger.LogInfo("The volcano rain has stopped.");
-    }
-
-    private void OnLoadingWorld()
-    {
-        SpawnInitialWorldItems();
-    }
-    
-    
-    
-    private void SpawnInitialWorldItems()
-    {
-        logger.LogInfo($"Starting one-time world generation. Spawning {MaxStones.Value} items...");
-
-        int successfullySpawned = 0;
-
-        for (int i = 0; i < MaxStones.Value; i++)
-        {
-            // Pick a random X and Z coordinate within your spawn radius
-            float randomX = UnityEngine.Random.Range(-SpawnRadius.Value, SpawnRadius.Value);
-            float randomZ = UnityEngine.Random.Range(-SpawnRadius.Value, SpawnRadius.Value);
-
-            // Create a starting point high up in the sky (200 meters up)
-            UnityEngine.Vector3 skyPosition = new UnityEngine.Vector3(randomX, 200f, randomZ);
-
-            // Shoot a raycast straight down to find the ground
-            // 500f is the max distance the laser will travel
-            if (UnityEngine.Physics.Raycast(skyPosition, UnityEngine.Vector3.down, out UnityEngine.RaycastHit hit, 500f))
+            Vector3 randomPos = chestPos + playerRight * -1.5f;
+            GameObject? randomStone = ItemSpawnHelper.SpawnRandomStone(randomPos, Quaternion.identity);
+            if (randomStone == null)
             {
-                // We hit the ground! Spawn the coconut exactly slightly above the hit point so it doesn't clip into the floor
-                UnityEngine.Vector3 groundPosition = hit.point + (UnityEngine.Vector3.up * 0.5f);
-
-                Photon.Pun.PhotonNetwork.Instantiate("0_Items/Item_Coconut", groundPosition, UnityEngine.Random.rotation, 0);
-                successfullySpawned++;
+                logger.LogError(
+                    "[Stones] SpawnRandomStone returned null - none of the stone " +
+                    "tiers are registered by PEAKLib?");
+                return;
             }
+            ItemSpawnHelper.LogSpawned("F2 (random)", randomStone, randomPos);
+
+            Vector3 stonePos = chestPos + playerRight * 1.5f;
+            // Pass tier.PrefabName (the GameObject's name) into SpawnStone.
+            // PEAKLib registered the prefab under that name in Photon's
+            // DefaultPool; the previous bug was passing the
+            // UnityItemContent ScriptableObject name ("RockContent")
+            // which never matched what Photon had cached.
+            logger.LogInfo($"Spawning {tier.PrefabName} at: {stonePos}");
+            GameObject? stone = ItemSpawnHelper.SpawnStone(tier.PrefabName, stonePos, Quaternion.identity);
+            if (stone == null)
+            {
+                logger.LogError(
+                    $"[Stones] SpawnStone returned null - '{tier.PrefabName}' " +
+                    "not registered by PEAKLib?");
+                return;
+            }
+            ItemSpawnHelper.LogSpawned($"F2 ({tier.PrefabName})", stone, stonePos);
+        }
+    }
+
+    /// <summary>
+    /// Spawns all four stone tiers in a horizontal row
+    /// (Pebble, Rock, Boulder, LargeBoulder) 1.5 m apart, in front of the
+    /// player at chest height.
+    /// </summary>
+    private void SpawnStoneRow(Vector3 chestPos, Vector3 playerVektor, Vector3 playerRight)
+    {
+        // Four slots, 1.5 m spacing, centered around 0 -> total span 4.5 m.
+        float[] offsets = { -2.25f, -0.75f, 0.75f, 2.25f };
+        for (int i = 0; i < StoneTiers.Length; i++)
+        {
+            var tier = StoneTiers[i];
+            Vector3 stonePos = chestPos + playerRight * offsets[i];
+            // Pass tier.PrefabName (the GameObject's name) into SpawnStone
+            // - PEAKLib registered the prefab under that name in Photon's
+            // DefaultPool; passing the UnityItemContent ScriptableObject
+            // name here previously caused "DefaultPool failed to load" +
+            // NullReferenceException on the master client.
+            logger.LogInfo(
+                $"Spawning {tier.PrefabName} (itemID={tier.ItemId}) at: {stonePos}");
+            GameObject? stone = ItemSpawnHelper.SpawnStone(tier.PrefabName, stonePos, Quaternion.identity);
+            if (stone == null)
+            {
+                logger.LogError(
+                    $"[Stones] SpawnStone returned null - '{tier.PrefabName}' " +
+                    "not registered by PEAKLib?");
+                continue;
+            }
+            ItemSpawnHelper.LogSpawned($"F2 (row: {tier.PrefabName})", stone, stonePos);
+        }
+    }
+
+    /// <summary>
+    /// Cycles the F2 debug spawn mode: <c>all-four</c> → <c>Pebble</c> →
+    /// <c>Rock</c> → <c>Boulder</c> → <c>LargeBoulder</c> → <c>all-four</c>.
+    /// Every F2 press also drops a random stone alongside the deterministic
+    /// spawn(s).
+    /// </summary>
+    private void HandleF4()
+    {
+        debugTierIndex++;
+        if (debugTierIndex >= StoneTiers.Length) debugTierIndex = -1;
+
+        if (debugTierIndex < 0)
+        {
+            logger.LogInfo(
+                "F4: F2 mode = spawn one random stone + all four tiers " +
+                "(Pebble + Rock + Boulder + LargeBoulder) in a row.");
+        }
+        else
+        {
+            var tier = StoneTiers[debugTierIndex];
+            logger.LogInfo(
+                $"F4: F2 mode = spawn one random stone + a single '{tier.PrefabName}' " +
+                $"(itemID={tier.ItemId}).");
+        }
+    }
+
+    private void HandleF3()
+    {
+        if (!StonesConfig.EnableVolcanoEvent.Value)
+        {
+            logger.LogInfo("F3: forcing a volcanic outbreak for debugging even though EnableVolcanoEvent is false.");
         }
 
-        logger.LogInfo($"World generation complete! Successfully spawned {successfullySpawned} items.");
+        VulcanStormManager manager = VulcanStormManager.EnsureInstance();
+        logger.LogInfo("F3 pressed: forcing the volcanic outbreak immediately for debugging.");
+        manager.StartVulcanOutbreak();
     }
-    
+
     private void PrintAllItems()
     {
-        Item[] allGameItems = UnityEngine.Resources.LoadAll<Item>("0_Items");
-    
-        foreach(Item item in allGameItems)
+        Item[] allGameItems = Resources.LoadAll<Item>("0_Items");
+        foreach (Item item in allGameItems)
         {
             logger.LogInfo("Found Item: " + item.gameObject.name + " | UI Name: " + item.UIData.itemName);
         }
-        
+    }
+}
+
+/// <summary>
+/// Per-tier metadata used by the F2/F4 debug hotkeys and by
+/// <see cref="ItemSpawnHelper.SpawnRandomStone"/> to identify each prefab.
+/// Sizes and masses are baked into the prefab itself in the Unity Editor,
+/// so this struct no longer carries per-tier scale / mass fields — every
+/// clone simply inherits the authored values via Unity serialization.
+///
+/// <para>
+/// The authoritative itemID is assigned by
+/// <c>PEAKLib.Items.ItemRegistrar.FinishRegisterItem</c> at registration
+/// time as an MD5 hash of <c>{mod.Id}:{item.name}</c>; this struct's
+/// <see cref="ItemId"/> field is just a legacy debug tag.
+/// </para>
+/// </summary>
+internal readonly struct StoneTier
+{
+    /// <summary>
+    /// Name of the <c>UnityItemContent</c> ScriptableObject as authored
+    /// in the Unity Editor (e.g. <c>"RockContent"</c>). Used as the key
+    /// when calling <c>peakBundle.LoadAsset&lt;UnityItemContent&gt;(...)</c>
+    /// to pull the asset out of <c>stones.peakbundle</c>.
+    /// </summary>
+    public readonly string ContentName;
+
+    /// <summary>
+    /// Name of the underlying GameObject <c>ItemPrefab</c> as authored
+    /// in the Unity Editor (e.g. <c>"rock"</c>). PEAKLib mutates that
+    /// GameObject to <c>"{mod.Id}:{PrefabName}"</c> and registers the
+    /// Photon prefab under <c>"0_Items/{mod.Id}:{PrefabName}"</c>.
+    /// Must be passed to <see cref="ItemSpawnHelper.SpawnStone"/> so
+    /// Photon's <c>DefaultPool</c> can resolve the prefab.
+    /// </summary>
+    public readonly string PrefabName;
+
+    /// <summary>Legacy per-tier debug tag (PEAKLib owns the real itemID).</summary>
+    public readonly ushort ItemId;
+
+    // Per-tier scale / mass fields removed: sizes and masses are baked
+    // into each prefab in the Unity Editor, so we no longer carry or
+    // broadcast them at runtime.
+
+    public StoneTier(string contentName, string prefabName, ushort itemId)
+    {
+        ContentName = contentName;
+        PrefabName = prefabName;
+        ItemId = itemId;
     }
 }

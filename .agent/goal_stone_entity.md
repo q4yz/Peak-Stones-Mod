@@ -1,22 +1,53 @@
 # Goal: The Stone Entity (Physics & Combat)
 
 ## Progress Checklist
-- [ ] Create the Stone prefab in the Unity Editor with `PhotonView`, `Rigidbody`, and `Collider`.
-- [ ] Export the Stone prefab as an AssetBundle.
-- [ ] Load the AssetBundle via BepInEx and register it to the Photon Network pool.
-- [ ] Make the Stone pickup-able and throwable (inherit logic from the Coconut item).
-- [ ] Randomize the scale/size of the Stone upon spawning.
-- [ ] Randomize the physical mass of the Stone's `Rigidbody` upon spawning.
-- [ ] Implement `OnCollisionEnter` kinetic energy calculations.
-- [ ] **Threshold 1:** Apply Knockout status to players hit with high energy.
-- [ ] **Threshold 2:** Apply Damage to players hit with extreme energy.
-- [ ] **Threshold 2:** Destroy the original stone and instantiate two smaller stone prefabs upon extreme impact.
+- [x] **Inventory & Network Registration fixed:** Adopted the official `PEAKLib` pipeline. Native `itemID` generation and network `DefaultPool` registration are now handled automatically by `peakBundle.Mod.RegisterContent()`.
+- [x] **Prefab Serialization fixed:** Abandoned programmatic `AddComponent<Item>()`. Prefabs are now built entirely in the Unity Editor and wrapped in `UnityItemContent` assets (`Pebble.asset`, `Rock.asset`, `Boulder.asset`) inside `stones.peakbundle`. This successfully bakes native dependencies (`ItemUIData`, `BackpackReference`, `SFX_Settings`) and prevents silent `NullReferenceException` crashes during pickup.
+- [x] **Physics & Bounciness fixed:** Replaced default Unity physics with a custom `Physic Material` (Friction: 0.8, Bounciness: 0) directly in the Editor to ensure heavy, dead thuds on impact.
+- [x] **Spawn pipeline fixed:** Raw `PhotonNetwork.Instantiate` would teleport items to `(0, -500, 0)` because `Item.Update()` snaps any `InBackpack` item to that kill position. Fixed via `ItemSpawnHelper.SpawnDropped` + `Item_SetKinematicRPC_Patch` Harmony Postfix.
+- [x] Implement `OnCollisionEnter` kinetic energy calculations in `StoneBehavior`.
+- [x] **Combat (Damage):** Apply Damage to players based strictly on the calculated kinetic energy of the impact.
+- [x] **Splitting (Downgrading):** Destroy the original stone and instantiate two prefabs of the next tier down (e.g., a Boulder spawns two Rocks) upon extreme impact.
 
-## Implementation Suggestions
-*   **AssetBundle Loading:** Use `AssetBundle.LoadFromFile(Path.Combine(Paths.PluginPath, "stonebundle"))` to load the custom model.
-*   **Randomization:** In the Stone's initialization method (e.g., `Start()`), use `transform.localScale = Vector3.one * Random.Range(0.5f, 2.0f);` and `GetComponent<Rigidbody>().mass = Random.Range(1f, 10f);` to give each stone unique physical properties.
-*   **Kinetic Combat Math:** In the `OnCollisionEnter(Collision col)` method, calculate the kinetic energy using standard physics: 
-    $E = \frac{1}{2}mv^2$ 
-    *(In C#: `float kineticEnergy = 0.5f * rb.mass * Mathf.Pow(rb.velocity.magnitude, 2);`)*
-*   **Applying Damage/Knockout:** Use `ilspycmd` to inspect the player collision/health scripts (e.g., search for `PlayerHealth`, `TakeDamage`, or `RagdollController`). Cast the `col.gameObject` to the player's health component and call its damage method if `kineticEnergy > StoneDamageThreshold.Value`.
-*   **Splitting:** When Threshold 2 is reached, call `PhotonNetwork.Instantiate` twice using a smaller scale, apply an explosive outward force to their Rigidbodies via `rb.AddExplosionForce()`, and finally `PhotonNetwork.Destroy` the original large stone.
+## PEAKLib Serialized Prefab Pipeline (Current Approach)
+
+We do **not** dynamically inject native `Item` components via code, and we do **not** skin native prefabs. The "Pure AssetBundle Code Injection" approach was abandoned because native item pickup logic iterates over deeply nested, serialized structural data (like `colliders`, `mainRenderer`, `ItemUIData`, and `ItemPhysicsSyncer`). When injected via reflection, these remain `null` and cause silent runtime crashes when transitioning to `ItemState.Held`.
+
+Instead, we use the official **PEAKLib Custom Item Pipeline**:
+1. Items are constructed in the Unity Editor with all necessary colliders, renderers, and native `Item` scripts attached.
+2. They are wrapped in `UnityItemContent` assets to interface with `PEAKLib`.
+3. At runtime, `Plugin.cs` loads the bundle, extracts the prefabs, attaches our custom `StoneBehavior`, and hands the keys to `PEAKLib` to automatically map them to the game's item dictionaries.
+
+## Discrete Tiers vs. Dynamic Scaling
+Dynamic scaling and random mass via `[PunRPC]` were **abandoned**. PEAK's inventory system strictly keys backpack slot weight, `throwForceMultiplier`, and UI icons to a static `itemID`. A dynamically scaled 100-pound boulder would incorrectly take up the same backpack space as a 1-pound pebble. 
+
+We now use discrete entities:
+*   **Pebble:** Fast throw, 1 inventory slot, low damage, low mass.
+*   **Rock:** Slower throw, 2 inventory slots, medium damage, medium mass.
+*   **Boulder:** Massive damage, heavy mass, un-storable (forces `ItemState.Held` only).
+
+### Files
+
+| File | Role |
+|---|---|
+| `Plugin.cs` | PEAKLib entry point. Uses `this.LoadBundleWithName` to load `stones.peakbundle`, extracts the three prefabs, dynamically attaches `StoneBehavior`, and calls `peakBundle.Mod.RegisterContent()`. |
+| `StoneHarmonyPatches.cs` | Contains `Item_SetKinematicRPC_Patch` (Postfix, Ground transition) to ensure spawned items drop cleanly instead of teleporting to backpack kill-zones. |
+| `StoneBehavior.cs` | Stripped of deprecated network/scaling logic. Purely a hook point for the upcoming `OnCollisionEnter` kinetic energy and damage combat math. |
+| `ItemSpawnHelper.cs` | Debug logic to randomly select and instantiate either `"Pebble"`, `"Rock"`, or `"Boulder"`, followed by `item.SetKinematicNetworked(false, pos, rot)` for the Ground transition. |
+
+## Verified Implementation Notes (from `ilspycmd` decompiles)
+
+### Item state machine
+- `Item : MonoBehaviourPunCallbacks, IInteractible` - global namespace.
+- `public enum ItemState { Ground, Held, InBackpack }` - no "Dropped" state, **Ground IS the world-physics state**.
+- `ItemState` is `{ get; set; }` (auto-property, public setter).
+- `Item.itemState` defaults to whatever the prefab serialized it as.
+
+### Why raw `PhotonNetwork.Instantiate` fails
+- `Item.Update()` runs every frame on every client:
+  ```csharp
+  if (itemState == ItemState.InBackpack 
+      && (backpackSlotTransform == null || !backpackSlotTransform.UnityObjectExists()))
+  {
+      base.transform.position = new Vector3(0f, -500f, 0f);
+  }

@@ -55,6 +55,8 @@
             that must be done separately with PackageReference items.
     -->
     <ThunderstoreDependency Include="BepInEx-BepInExPack_PEAK" Version="5.4.75301" />
+    <ThunderstoreDependency Include="PEAKModding-PEAKLib_Core" Version="1.7.2" />
+    <ThunderstoreDependency Include="PEAKModding-PEAKLib_Items" Version="1.6.0" />
   </ItemGroup>
 
   <!--
@@ -74,12 +76,17 @@
     Note that this does NOT mark the package as a dependency
     for your Thunderstore package.
   -->
-
+  <!-- PEAKLib (Core + Items) - official item-registration pipeline.
+       Published as standard NuGet packages by the PEAKModding team. -->
+  <ItemGroup>
+    <PackageReference Include="PEAKModding.PEAKLib.Core" Version="1.7.2" />
+    <PackageReference Include="PEAKModding.PEAKLib.Items" Version="1.6.0" />
+  </ItemGroup>
   <!-- Auto-copy the built DLL to your Thunderstore profile for testing -->
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="C:\Users\pc\AppData\Roaming\Thunderstore Mod Manager\DataFolder\PEAK\profiles\create Mod\BepInEx\plugins" />
   </Target>
-    <ItemGroup>
+  <ItemGroup>
     <Reference Include="Assembly-CSharp">
       <HintPath>D:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\Assembly-CSharp.dll</HintPath>
     </Reference>
@@ -88,6 +95,9 @@
     </Reference>
     <Reference Include="PhotonRealtime">
       <HintPath>D:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\PhotonRealtime.dll</HintPath>
+    </Reference>
+    <Reference Include="Photon3Unity3D">
+      <HintPath>D:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\Photon3Unity3D.dll</HintPath>
     </Reference>
   </ItemGroup>
 </Project>

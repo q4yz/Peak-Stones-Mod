@@ -1,0 +1,11 @@
+{
+  "name": "Stones",
+  "version_number": "0.1.0",
+  "description": "The Stones mod for PEAK adds custom interactable stones and a Volcano Event featuring falling stones, player knockouts, and shattering fragments.",
+  "website_url": "",
+  "dependencies": [
+    "BepInEx-BepInExPack_PEAK-5.4.75301",
+    "PEAKModding-PEAKLib_Core-1.7.2",
+    "PEAKModding-PEAKLib_Items-1.6.0"
+  ]
+}

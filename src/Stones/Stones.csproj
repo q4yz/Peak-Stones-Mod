@@ -8,7 +8,7 @@
     <!-- This is the display name of your mod. -->
     <AssemblyTitle>Stones</AssemblyTitle>
     <!-- The version number for your assembly, BepInEx plugin, and Thunderstore package. -->
-    <Version>0.1.0</Version>
+    <Version>0.1.3</Version>
   </PropertyGroup>
 
   <!-- ThunderPipe properties -->
@@ -17,7 +17,7 @@
     <IsThunderstorePackable>true</IsThunderstorePackable>
     <!-- Package name on Thunderstore. Must not contain spaces ' ' or dashes '-'. -->
     <ThunderstoreName>Stones</ThunderstoreName>
-    <ThunderstoreDescription>TODO: Fill in short mod description at max 250 characters.</ThunderstoreDescription>
+    <ThunderstoreDescription>The Stones mod for PEAK adds custom interactable stones and a Volcano Event featuring falling stones, player knockouts, and shattering fragments.</ThunderstoreDescription>
     <!--
       Communities and package categories metadata for publishing with ThunderPipe.
       Communities: https://thunderstore.io/api/experimental/community/
@@ -40,6 +40,7 @@
 
       <ModFile Include="./Assets/bundle" Destination="plugins/" />
     -->
+    <ModFile Include="D:\Stone_assets\AssetsBundles\stones.peakbundle" Destination="plugins/" />
   </ItemGroup>
 
   <!-- Thunderstore package metadata -->
@@ -57,6 +58,7 @@
     <ThunderstoreDependency Include="BepInEx-BepInExPack_PEAK" Version="5.4.75301" />
     <ThunderstoreDependency Include="PEAKModding-PEAKLib_Core" Version="1.7.2" />
     <ThunderstoreDependency Include="PEAKModding-PEAKLib_Items" Version="1.6.0" />
+    <ThunderstoreDependency Include="PEAKModding-ModConfig" Version="1.6.0" />
   </ItemGroup>
 
   <!--
@@ -79,13 +81,23 @@
   <!-- PEAKLib (Core + Items) - official item-registration pipeline.
        Published as standard NuGet packages by the PEAKModding team. -->
   <ItemGroup>
-    <PackageReference Include="PEAKModding.PEAKLib.Core" Version="1.7.2" />
-    <PackageReference Include="PEAKModding.PEAKLib.Items" Version="1.6.0" />
+    <PackageReference Include="PEAKModding-PEAKLib_Core" Version="1.7.2" />
+    <PackageReference Include="PEAKModding-PEAKLib_Items" Version="1.6.0" />
+    <PackageReference Include="PEAKModding-ModConfig" Version="1.6.0" />
   </ItemGroup>
   <!-- Auto-copy the built DLL to your Thunderstore profile for testing -->
+  
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="C:\Users\pc\AppData\Roaming\Thunderstore Mod Manager\DataFolder\PEAK\profiles\create Mod\BepInEx\plugins" />
+    <!-- Copy DLL -->
+    <!-- Copy AssetBundle -->
+   
   </Target>
+  <Target Name="IncludeAssetBundleInPackage" BeforeTargets="DispatchToInnerBuilds;Build">
+    <!-- Copies your asset bundle into the build output directory so ThunderPipe picks it up -->
+    <Copy SourceFiles="D:\Stone_assets\AssetsBundles\stones.peakbundle" DestinationFolder="$(TargetDir)" Condition="Exists('$(ProjectDir)stones.peakbundle')" />
+  </Target>
+  
+  
   <ItemGroup>
     <Reference Include="Assembly-CSharp">
       <HintPath>D:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\Assembly-CSharp.dll</HintPath>
@@ -95,6 +107,10 @@
     </Reference>
     <Reference Include="PhotonRealtime">
       <HintPath>D:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\PhotonRealtime.dll</HintPath>
+    </Reference>
+    <Reference Include="Zorro.Core.Runtime">
+      <HintPath>D:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\Zorro.Core.Runtime.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="Photon3Unity3D">
       <HintPath>D:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\Photon3Unity3D.dll</HintPath>

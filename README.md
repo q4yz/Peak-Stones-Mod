@@ -1,36 +1,19 @@
 # Stones
 
-Describe your project here!
+The **Stones** mod for PEAK introduces a dynamic, physics-based environmental item and catastrophic weather system to the game. It transforms the world by populating it with interactive stones, adding high-stakes kinetic combat mechanics, and bringing unpredictable danger from the skies.
 
-## Template Instructions
+---
 
-You can remove this section after you've set up your project.
+## Features
 
-Next steps:
+### 🌋 The Volcano Event
+A randomized, catastrophic weather event that completely alters the atmosphere and environment:
+* **The Buildup:** Triggers an intense, immersive camera shake accompanied by a dramatic skybox shift to deep red and gray tones.
+* **The Climax:** Following a 5-second suspense delay, a fierce barrage of stones rains down across the map.
+* **Performance Cleanup:** Volcano-spawned stones automatically despawn when out of player proximity to maintain optimal frame rates.
 
-- Create a copy of the `Config.Build.user.props.template` file and name it `Config.Build.user.props`
-  - This will automate copying your plugin assembly to `BepInEx/plugins/`
-  - Configure the paths to point to your game path and your `BepInEx/plugins/`
-  - Game assembly references should work if the path to the game is valid
-- Search `TODO` in the whole project to see what you should configure or modify
-
-### Thunderstore Packaging & Publishing
-
-This template comes with Thunderstore packaging built-in, using [ThunderPipe](<https://github.com/WarperSan/ThunderPipe>).
-
-You can build Thunderstore packages by building with release configuration:
-
-```sh
-dotnet build -c Release -v d
-```
-
-> [!NOTE]  
-> You can learn about different build options with `dotnet build --help`.  
-> `-c` is short for `--configuration` and `-v d` is `--verbosity detailed`.
-
-The built package will be found at `./artifacts/thunderstore/`.
-
-You can directly publish to Thunderstore by including `-p:PublishTS=true` in the command. See the `Config.Build.user.props.template` file for configuration instructions.
-
-> [!TIP]  
-> Make sure the local package looks fine in `./artifacts/thunderstore/` first, then publish with `dotnet build -c Release -p:PublishTS=true -v d` to avoid potential mistakes.
+### 🪨 The Stones
+Stones are fully interactable objects behaving like standard world items (similar to the base game's coconut):
+* **Velocity & Mass Calculations:** Impact force is calculated dynamically based on the stone's physical traits and speed.
+* Striking a player to knocks them out.
+* **Shatter Mechanic:** Striking a target with high speed deals damage, completely shatters the stone, and splits it into two smaller, independent flying fragments.

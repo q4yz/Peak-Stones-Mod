@@ -9,7 +9,7 @@ public static class CampfireRetryScatterPatch
     [HarmonyPostfix]
     public static void Postfix(bool updateSegment, Campfire __instance)
     {
-        if (!PhotonNetwork.IsMasterClient || !updateSegment)
+        if (!IsMaster() || !updateSegment)
         {
             return;
         }
@@ -18,5 +18,10 @@ public static class CampfireRetryScatterPatch
         {
             MapStoneSpawner.Instance.StartCoroutine(MapStoneSpawner.Instance.DelayedRetryQueue());
         }
+    }
+    
+    private static bool IsMaster()
+    {
+        return PhotonNetwork.IsMasterClient;
     }
 }

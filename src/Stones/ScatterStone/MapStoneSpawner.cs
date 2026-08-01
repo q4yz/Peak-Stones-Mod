@@ -9,6 +9,7 @@ namespace Stones;
 [AddComponentMenu("Stones/Map Stone Spawner")]
 public class MapStoneSpawner : MonoBehaviourPunCallbacks
 {
+    // --- CONFIGURATION ---
     [Header("Spawn Volume")]
     public float mapMinX = -175f;
     public float mapMaxX = 175f;
@@ -29,17 +30,27 @@ public class MapStoneSpawner : MonoBehaviourPunCallbacks
     [Header("Performance")]
     [Min(1)] public int spawnsPerFrame = 5;
 
-    // --- State ---
+    // --- STATE ---
     public static bool _hasSpawnedThisRun = false;
     public static MapStoneSpawner? Instance { get; private set; }
     
     // Stores (X, Z) coordinates of stones waiting for chunks to load
     private List<Vector2> pendingSpawns = new List<Vector2>();
 
+    // ==========================================
+    // UNITY MESSAGES (Lifecycle)
+    // ==========================================
+
     private void Awake()
     {
         Instance = this;
         groundLayerMask = BuildDefaultGroundMask();
+    }
+
+    public override void OnEnable()
+    {
+        base.OnEnable();
+        if (Instance == null) Instance = this;
     }
 
     private void OnDestroy()
@@ -48,17 +59,20 @@ public class MapStoneSpawner : MonoBehaviourPunCallbacks
         if (Instance == this) Instance = null;
     }
     
-    public override void OnEnable()
-    {
-        base.OnEnable();
-        if (Instance == null) Instance = this;
-    }
-
     public override void OnLeftRoom()
     {
         _hasSpawnedThisRun = false;
-        pendingSpawns.Clear(); // Reset queue on room exit
+        pendingSpawns.Clear(); 
     }
+
+    private void OnValidate()
+    {
+        ClampConfigurationValues();
+    }
+
+    // ==========================================
+    // PUBLIC API & COROUTINES (The Main Flow)
+    // ==========================================
 
     /// <summary>
     /// Generates all coordinates and runs the first batch for the starting area.
@@ -69,28 +83,14 @@ public class MapStoneSpawner : MonoBehaviourPunCallbacks
         if (!PhotonNetwork.IsMasterClient) return;
 
         pendingSpawns.Clear();
-        float lobbyExclusionSqr = lobbyExclusionRadius * lobbyExclusionRadius;
-
         int totalStonesToSpawn = StonesConfig.MaxStones.Value;
 
-        for (int i = 0; i < totalStonesToSpawn ; i++)
+        for (int i = 0; i < totalStonesToSpawn; i++)
         {
-            float x = 0f, z = 0f;
-            bool outsideLobby = false;
-
-            int attempts = 1 + Mathf.Max(0, maxExclusionRetries);
-            for (int attempt = 0; attempt < attempts; attempt++)
+            if (TryGenerateValidCoordinate(out Vector2 validPos))
             {
-                x = Random.Range(mapMinX, mapMaxX);
-                z = Random.Range(mapMinZ, mapMaxZ);
-                if ((x * x + z * z) >= lobbyExclusionSqr)
-                {
-                    outsideLobby = true;
-                    break;
-                }
+                pendingSpawns.Add(validPos);
             }
-
-            if (outsideLobby) pendingSpawns.Add(new Vector2(x, z));
         }
 
         ModLogger.LogDebug($"[Stones] Queued {pendingSpawns.Count} stone locations.");
@@ -110,22 +110,17 @@ public class MapStoneSpawner : MonoBehaviourPunCallbacks
         for (int i = 0; i < pendingSpawns.Count; i++)
         {
             Vector2 pos = pendingSpawns[i];
-            Vector3 skyPos = new Vector3(pos.x, skySpawnHeight, pos.y);
 
-            if (Physics.Raycast(skyPos, Vector3.down, out RaycastHit hit, raycastMaxDistance, groundLayerMask.value, triggerInteraction))
+            if (TrySpawnStoneAt(pos))
             {
-                Vector3 spawnPos = hit.point + Vector3.up * groundOffset;
-                if (ItemSpawnHelper.SpawnRandomStone(spawnPos, Random.rotation) != null)
-                {
-                    successfulThisBatch++;
-                }
+                successfulThisBatch++;
             }
             else
             {
                 stillPending.Add(pos); 
             }
 
-            if (spawnsPerFrame > 0 && (i + 1) % spawnsPerFrame == 0) yield return null;
+            if (ShouldYieldThisFrame(i)) yield return null;
         }
 
         pendingSpawns = stillPending;
@@ -137,15 +132,61 @@ public class MapStoneSpawner : MonoBehaviourPunCallbacks
     /// </summary>
     public IEnumerator DelayedRetryQueue()
     {
-        ModLogger.LogInfo("[Stones] Waiting 3s for new chunks to load before retrying stone spawns...");
-        yield return new WaitForSeconds(10f);
+        float waitSeconds = 10f;
+        ModLogger.LogInfo($"[Stones] Waiting {waitSeconds}s for new chunks to load before retrying stone spawns...");
+        
+        yield return new WaitForSeconds(waitSeconds);
         yield return StartCoroutine(ProcessPendingSpawns());
     }
 
-    private void OnValidate()
+    // ==========================================
+    // HELPER METHODS (Math & Logic Extraction)
+    // ==========================================
+
+    private bool TryGenerateValidCoordinate(out Vector2 result)
     {
-        int totalStonesToSpawn = StonesConfig.MaxStones.Value;
-        if (totalStonesToSpawn < 0) totalStonesToSpawn = 0;
+        float lobbyExclusionSqr = lobbyExclusionRadius * lobbyExclusionRadius;
+        int attempts = 1 + Mathf.Max(0, maxExclusionRetries);
+
+        for (int attempt = 0; attempt < attempts; attempt++)
+        {
+            float x = Random.Range(mapMinX, mapMaxX);
+            float z = Random.Range(mapMinZ, mapMaxZ);
+            
+            // Check if distance is outside the lobby radius
+            if ((x * x + z * z) >= lobbyExclusionSqr)
+            {
+                result = new Vector2(x, z);
+                return true;
+            }
+        }
+
+        result = Vector2.zero;
+        return false;
+    }
+
+    private bool TrySpawnStoneAt(Vector2 pos)
+    {
+        Vector3 skyPos = new Vector3(pos.x, skySpawnHeight, pos.y);
+
+        if (Physics.Raycast(skyPos, Vector3.down, out RaycastHit hit, raycastMaxDistance, groundLayerMask.value, triggerInteraction))
+        {
+            Vector3 spawnPos = hit.point + Vector3.up * groundOffset;
+            GameObject? spawnedStone = ItemSpawnHelper.SpawnRandomStone(spawnPos, Random.rotation);
+            
+            return spawnedStone != null;
+        }
+        
+        return false;
+    }
+
+    private bool ShouldYieldThisFrame(int currentIndex)
+    {
+        return spawnsPerFrame > 0 && (currentIndex + 1) % spawnsPerFrame == 0;
+    }
+
+    private void ClampConfigurationValues()
+    {
         if (lobbyExclusionRadius < 0f) lobbyExclusionRadius = 0f;
         if (maxExclusionRetries < 0) maxExclusionRetries = 0;
         if (skySpawnHeight < 0f) skySpawnHeight = 0f;

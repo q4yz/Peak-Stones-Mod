@@ -20,21 +20,18 @@ public enum LogLevel
 public static class StonesConfig
 {
     public static ConfigEntry<bool> EnableDebugLogging{ get; private set; } = null!;
-    
     public static ConfigEntry<bool> EnableDebug{ get; private set; } = null!;
-    
     public static ConfigEntry<LogLevel> MinLogLevel{ get; private set; } = null!;
-    public static ConfigEntry<int> MaxStones { get; private set; } = null!;
     
+    
+    public static ConfigEntry<int> MaxStones { get; private set; } = null!;
     public static ConfigEntry<bool> EnableGrenades { get; private set; } = null!;
 
-
-    // --- 2. Events ---
+    
     public static ConfigEntry<int> VolcanoMaxStones { get; private set; } = null!;
     public static ConfigEntry<bool> EnableVolcanoEvent { get; private set; } = null!;
     public static ConfigEntry<float> VulcanOutbreakChance { get; private set; } = null!;
     public static ConfigEntry<int> VulcanStoneBurstCount { get; private set; } = null!;
-
     public static ConfigEntry<float> StoneRainDropRate { get; private set; } = null!;
 
    
@@ -43,44 +40,44 @@ public static class StonesConfig
     {
         
         EnableDebugLogging = config.Bind(
-            "Debug", "EnableLogging", true, 
+            "Debug", "Enable Logging", true, 
             "If true, enables detailed debug logging in the console.");
         
         
         EnableDebug = config.Bind(
-            "Debug", "EnableDebug", true, 
+            "Debug", "Enable Debug", true, 
             "If true, enables debug commands.");
         
         MinLogLevel = config.Bind(
-            "Debug", "MinimumLogLevel", LogLevel.None,
+            "Debug", "Minimum Log Level", LogLevel.None,
             "Minimum severity level of logs to display in the console. Options: Debug, Info, Warning, Error, None.");
         
         MaxStones = config.Bind(
-            "1. Spawning", "MaxStones", 700,
+            "1. Spawning", "Max Stones", 700,
             "The maximum number of items allowed in the world.");
 
         EnableVolcanoEvent = config.Bind(
-            "2. Events", "EnableVolcanoEvent", true,
+            "2. Events", "Enable Volcano Event", true,
             "Set to true to allow the volcanic outbreak hijack.");
         
         VolcanoMaxStones = config.Bind(
-            "2. Events", "VolcanoMaxStones", 30,
+            "2. Events", "Volcano Max Stones", 30,
             "The maximum number of items allowed in a volcanic outbreak.");
         
         VulcanOutbreakChance = config.Bind(
-            "2. Events", "VulcanOutbreakChance", 1.0f,
+            "2. Events", "Vulcan Outbreak Chance", 1.0f,
             "Chance for a normal storm start to become a volcanic outbreak.");
         
         VulcanStoneBurstCount = config.Bind(
-            "2. Events", "VulcanStoneBurstCount", 5,
+            "2. Events", "Vulcan Stone Burst Count", 5,
             "How many stones to burst into the sky when the outbreak starts.");
         
         StoneRainDropRate = config.Bind(
-            "2. Events", "StoneRainDropRate", 2f,
+            "2. Events", "Stone Rain Drop Rate", 2f,
             "Legacy setting kept for compatibility with the old coroutine path.");
         
         EnableGrenades = config.Bind(
-            "1. Spawning", "EnableGrenades", true, 
+            "1. Spawning", "Enable Grenades", true, 
             "If true, grenades are allowed to spawn in chests/world.");
        
     }

@@ -21,48 +21,53 @@ public class AutoLightBehavior : MonoBehaviourPun
 
     private void Update()
     {
-        if (hasTriggered) return;
-        
-        // Only the master client or owner handles the network spawn translation
-        if (!photonView.IsMine) return;
-
-        // The moment the item hits the ground (thrown/dropped)
-        if (item.itemState == ItemState.Ground)
+        if (hasTriggered || !photonView.IsMine || !IsOnGround())
         {
-            hasTriggered = true;
+            return;
+        }
+        TriggerExplosiveSwap();
+    }
 
-            Vector3 spawnPos = transform.position;
-            Quaternion spawnRot = transform.rotation;
+    private bool IsOnGround()
+    {
+        return item.itemState == ItemState.Ground;
+    }
 
-            ModLogger.LogInfo("[AutoLight] Custom explosive dropped/thrown. Spawning native vanilla Dynamite swap...");
+    private void TriggerExplosiveSwap()
+    {
+        hasTriggered = true;
+        ModLogger.LogInfo("[AutoLight] Custom explosive dropped/thrown. Spawning native vanilla Dynamite swap...");
 
-            try
+        SpawnAndIgniteVanillaDynamite();
+        DespawnCustomItem();
+    }
+
+    private void SpawnAndIgniteVanillaDynamite()
+    {
+        try
+        {
+            GameObject realDynamiteObj =
+                PhotonNetwork.Instantiate("0_Items/Dynamite", transform.position, transform.rotation);
+
+            if (realDynamiteObj != null)
             {
-                // 1. Spawn the real base-game Dynamite through Photon DefaultPool ("0_Items/Dynamite" or matching registered name)
-                // Note: Ensure "Dynamite" matches the exact registered Photon prefab name for vanilla dynamite in the game's resource pool.
-                GameObject realDynamiteObj = PhotonNetwork.Instantiate("0_Items/Dynamite", spawnPos, spawnRot);
-                
-                if (realDynamiteObj != null)
+                Dynamite realDynamite = realDynamiteObj.GetComponent<Dynamite>();
+                if (realDynamite != null)
                 {
-                    Dynamite realDynamite = realDynamiteObj.GetComponent<Dynamite>();
-                    if (realDynamite != null)
-                    {
-                        // Set the fuse time super short so it blows up instantly
-                        realDynamite.startingFuseTime = 0.01f;
-                        
-                        // Force light it immediately
-                        realDynamite.LightFlare();
-                    }
+                    realDynamite.startingFuseTime = 0.01f;
+                    realDynamite.LightFlare();
                 }
             }
-            catch (System.Exception ex)
-            {
-                ModLogger.LogError($"[AutoLight] Failed to spawn native dynamite: {ex.Message}");
-            }
-
-            // 2. Clean up and destroy our custom item instance instantly across the network
-            item.ClearDataFromBackpack();
-            PhotonNetwork.Destroy(base.gameObject);
         }
+        catch (System.Exception ex)
+        {
+            ModLogger.LogError($"[AutoLight] Failed to spawn native dynamite: {ex.Message}");
+        }
+    }
+
+    private void DespawnCustomItem()
+    {
+        item.ClearDataFromBackpack();
+        PhotonNetwork.Destroy(gameObject);
     }
 }

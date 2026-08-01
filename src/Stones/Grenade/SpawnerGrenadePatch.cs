@@ -7,41 +7,65 @@ namespace Stones;
 [HarmonyPatch(typeof(Spawner), "GetObjectsToSpawn")]
 public class SpawnerGrenadePatch
 {
-    // Make sure to add the Spawner __instance parameter so we can access its fallback item!
+    // ==========================================
+    // HARMONY PATCH (The Main Flow)
+    // ==========================================
+
     static void Postfix(Spawner __instance, ref List<GameObject> __result)
     {
-        // 1. If the config says grenades are enabled, do nothing! Let them spawn.
+        // 1. If grenades are allowed, let the game spawn them normally.
         if (StonesConfig.EnableGrenades.Value) return;
 
+        // 2. If nothing spawned, do nothing.
         if (__result == null || __result.Count == 0) return;
 
-        for (int i = 0; i < __result.Count; i++)
+        // 3. Filter the spawn list.
+        ReplaceGrenadesInSpawnList(__instance, __result);
+    }
+
+    // ==========================================
+    // HELPER METHODS
+    // ==========================================
+
+    private static void ReplaceGrenadesInSpawnList(Spawner spawner, List<GameObject> spawnList)
+    {
+        for (int i = 0; i < spawnList.Count; i++)
         {
-            // 2. Did this slot roll a Grenade?
-            if (__result[i] != null && __result[i].name.Contains("Grenade"))
+            if (IsGrenade(spawnList[i]))
             {
-                GameObject replacementItem = null;
-
-                // 3. STRATEGY A: Find another item in this same chest that ISN'T a grenade and duplicate it.
-                // Example: If the chest rolled [Grenade, Flashlight], it becomes [Flashlight, Flashlight].
-                foreach (var safeItem in __result)
-                {
-                    if (safeItem != null && !safeItem.name.Contains("Grenade"))
-                    {
-                        replacementItem = safeItem;
-                        break;
-                    }
-                }
-
-                // 4. STRATEGY B: If the chest ONLY rolled grenades (very rare), use the spawner's built-in fallback item.
-                if (replacementItem == null && __instance.fallbackSpawn != null)
-                {
-                    replacementItem = __instance.fallbackSpawn;
-                }
-
-                // 5. Swap the grenade out for the safe replacement. The slot is no longer empty!
-                __result[i] = replacementItem;
+                spawnList[i] = DetermineReplacementItem(spawner, spawnList);
             }
         }
+    }
+
+    private static bool IsGrenade(GameObject? obj)
+    {
+        return obj != null && obj.name.Contains("Grenade");
+    }
+
+    private static GameObject? DetermineReplacementItem(Spawner spawner, List<GameObject> spawnList)
+    {
+        // STRATEGY A: Find another safe item in the same chest to duplicate.
+        // Example: If the chest rolled [Grenade, Flashlight], it becomes [Flashlight, Flashlight].
+        GameObject? replacement = FindSafeItemInList(spawnList);
+
+        // STRATEGY B: If the chest ONLY rolled grenades (very rare), use the spawner's built-in fallback item.
+        if (replacement == null && spawner.fallbackSpawn != null)
+        {
+            replacement = spawner.fallbackSpawn;
+        }
+        return replacement;
+    }
+
+    private static GameObject? FindSafeItemInList(List<GameObject> spawnList)
+    {
+        foreach (var item in spawnList)
+        {
+            if (!IsGrenade(item))
+            {
+                return item;
+            }
+        }
+        return null;
     }
 }

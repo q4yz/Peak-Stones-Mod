@@ -42,20 +42,12 @@ public class VolcanoVisuals : MonoBehaviour
     public float shakeMagnitude = 0f;
 
     private Camera? targetCam;
-    private Vector3 shakeBaseEuler;
+    private Vector3 shakeBasePosition;
     private bool shakeBaseCaptured;
 
     private void Start()
     {
-        targetCam = Camera.main ?? Object.FindAnyObjectByType<Camera>();
-        if (targetCam != null)
-        {
-            ModLogger.LogInfo($"[VolcanoVisuals] Initialized successfully. Target camera found: '{targetCam.name}'");
-        }
-        else
-        {
-            ModLogger.LogWarning("[VolcanoVisuals] Initialized, but NO camera could be found in the scene yet!");
-        }
+        EnsureCameraAssigned();
 
         if (sun == null)
         {
@@ -67,71 +59,95 @@ public class VolcanoVisuals : MonoBehaviour
     {
         if (enforceEnvironment)
         {
-            RenderSettings.ambientLight = ambient;
-            RenderSettings.fogColor = fogColor;
-            RenderSettings.fogDensity = fogDensity;
-            RenderSettings.fog = true;
-            RenderSettings.fogMode = FogMode.ExponentialSquared;
-
-            if (sun != null)
-            {
-                sun.color = sunColor;
-                sun.intensity = sunIntensity;
-            }
-
-            Shader.SetGlobalColor("SkyTopColor", new Color(0.2f, 0.0f, 0.0f));     // Dark red/black
-            Shader.SetGlobalColor("SkyMidColor", new Color(0.8f, 0.3f, 0.0f));     // Orange
-            Shader.SetGlobalColor("SkyBottomColor", new Color(1.0f, 0.2f, 0.0f));  // Bright red
-            Shader.SetGlobalFloat("GlobalWind", 1.0f);                            // Force ash/wind effect
+            ApplyEnvironmentalVisuals();
         }
 
-        if (!isShaking)
+        if (isShaking)
         {
-            if (shakeBaseCaptured)
-            {
-                // If we were shaking and just stopped, make sure to reset the camera local euler angles back cleanly
-                if (targetCam != null)
-                {
-                    targetCam.transform.localEulerAngles = shakeBaseEuler;
-                    ModLogger.LogInfo("[VolcanoVisuals] Shake ended. Camera rotation restored to base.");
-                }
-            }
-            shakeBaseCaptured = false;
-            return;
+            ApplyCameraShake();
         }
-
-        if (targetCam == null)
+        else if (shakeBaseCaptured)
         {
-            targetCam = Camera.main ?? Object.FindAnyObjectByType<Camera>();
-            if (targetCam != null)
-            {
-                ModLogger.LogInfo($"[VolcanoVisuals] Target camera re-acquired during shake: '{targetCam.name}'");
-            }
+            RestoreCameraPosition();
         }
-
-        if (targetCam == null)
-        {
-            ModLogger.LogWarning("[VolcanoVisuals] Cannot shake camera: targetCam is still null!");
-            return;
-        }
-
-        if (!shakeBaseCaptured)
-        {
-            // Capture the camera's original LOCAL POSITION instead of rotation
-            shakeBaseEuler = targetCam.transform.localPosition; // reusing the Vector3 variable name
-            shakeBaseCaptured = true;
-            ModLogger.LogInfo($"[VolcanoVisuals] Captured base camera position for shake: {shakeBaseEuler}");
-        }
-        
-        float x = (Random.Range(-1f, 1f)) * shakeMagnitude;
-        float y = (Random.Range(-1f, 1f)) * shakeMagnitude;
-        
-        targetCam.transform.localPosition = shakeBaseEuler + new Vector3(x, y, 0f);
-        
     }
 
     private void OnDestroy()
     {
         ModLogger.LogInfo("[VolcanoVisuals] Component destroyed / cleaned up.");
+    }
+
+    private void ApplyEnvironmentalVisuals()
+    {
+        RenderSettings.ambientLight = ambient;
+        RenderSettings.fogColor = fogColor;
+        RenderSettings.fogDensity = fogDensity;
+        RenderSettings.fog = true;
+        RenderSettings.fogMode = FogMode.ExponentialSquared;
+
+        if (sun != null)
+        {
+            sun.color = sunColor;
+            sun.intensity = sunIntensity;
+        }
+
+        Shader.SetGlobalColor("SkyTopColor", new Color(0.2f, 0.0f, 0.0f));     // Dark red/black
+        Shader.SetGlobalColor("SkyMidColor", new Color(0.8f, 0.3f, 0.0f));     // Orange
+        Shader.SetGlobalColor("SkyBottomColor", new Color(1.0f, 0.2f, 0.0f));  // Bright red
+        Shader.SetGlobalFloat("GlobalWind", 1.0f);                             // Force ash/wind effect
+    }
+
+    private void ApplyCameraShake()
+    {
+        if (!EnsureCameraAssigned()) 
+        {
+            return;
+        }
+
+        if (!shakeBaseCaptured)
+        {
+            CaptureBaseCameraPosition();
+        }
+        
+        float x = Random.Range(-1f, 1f) * shakeMagnitude;
+        float y = Random.Range(-1f, 1f) * shakeMagnitude;
+        
+        targetCam!.transform.localPosition = shakeBasePosition + new Vector3(x, y, 0f);
+    }
+
+    private void CaptureBaseCameraPosition()
+    {
+        shakeBasePosition = targetCam!.transform.localPosition;
+        shakeBaseCaptured = true;
+        ModLogger.LogInfo($"[VolcanoVisuals] Captured base camera position for shake: {shakeBasePosition}");
+    }
+
+    private void RestoreCameraPosition()
+    {
+        if (targetCam != null)
+        {
+            targetCam.transform.localPosition = shakeBasePosition;
+            ModLogger.LogInfo("[VolcanoVisuals] Shake ended. Camera position restored to base.");
+        }
+        shakeBaseCaptured = false;
+    }
+    
+    private bool EnsureCameraAssigned()
+    {
+        if (targetCam != null) 
+        {
+            return true;
+        }
+
+        targetCam = Camera.main ?? Object.FindAnyObjectByType<Camera>();
+        
+        if (targetCam != null)
+        {
+            ModLogger.LogInfo($"[VolcanoVisuals] Target camera acquired: '{targetCam.name}'");
+            return true;
+        }
+
+        ModLogger.LogWarning("[VolcanoVisuals] Cannot apply camera effects: targetCam is null!");
+        return false;
     }
 }

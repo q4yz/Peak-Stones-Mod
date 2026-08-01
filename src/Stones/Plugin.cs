@@ -63,7 +63,7 @@ public partial class Plugin : BaseUnityPlugin
         
         new Harmony(HarmonyId).PatchAll(typeof(Plugin).Assembly);
 
-        VulcanStormManager.EnsureInstance();
+        VulcanManager.EnsureInstance();
         this.LoadBundleWithName(BundleFileName, RegisterStonesContent);
         
         
@@ -251,7 +251,7 @@ public partial class Plugin : BaseUnityPlugin
             ModLogger.LogInfo("F3: forcing a volcanic outbreak for debugging even though EnableVolcanoEvent is false.");
         }
 
-        VulcanStormManager manager = VulcanStormManager.EnsureInstance();
+        VulcanManager manager = VulcanManager.EnsureInstance();
         ModLogger.LogInfo("F3 pressed: forcing the volcanic outbreak immediately for debugging.");
         manager.StartVulcanOutbreak();
     }

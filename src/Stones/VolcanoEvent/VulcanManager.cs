@@ -10,17 +10,18 @@ namespace Stones;
 /// WindChillZone RPCs and room-property updates.
 /// </summary>
 [DisallowMultipleComponent]
-public sealed class VulcanStormManager : MonoBehaviourPunCallbacks
+public sealed class VulcanManager : MonoBehaviourPunCallbacks
 {
     private const string VulcanOutbreakRoomKey = "Stones.VulcanOutbreakActive";
+    
+    private Coroutine? _activeOutbreakCoroutine;
 
-    public static VulcanStormManager? Instance { get; private set; }
+    public static VulcanManager? Instance { get; private set; }
+    public bool IsVulcanOutbreakActive => _isVulcanOutbreakActive;
 
-    public bool IsVulcanOutbreakActive => isVulcanOutbreakActive;
+    private bool _isVulcanOutbreakActive = false;
 
-    private bool isVulcanOutbreakActive;
-
-    public static VulcanStormManager EnsureInstance()
+    public static VulcanManager EnsureInstance()
     {
         if (Instance != null)
         {
@@ -29,7 +30,7 @@ public sealed class VulcanStormManager : MonoBehaviourPunCallbacks
 
         GameObject go = new GameObject("VulcanStormManager");
         DontDestroyOnLoad(go);
-        return go.AddComponent<VulcanStormManager>();
+        return go.AddComponent<VulcanManager>();
     }
 
     private void Awake()
@@ -75,12 +76,12 @@ public sealed class VulcanStormManager : MonoBehaviourPunCallbacks
 
     public void StartVulcanOutbreak()
     {
-        if (isVulcanOutbreakActive)
+        if (_isVulcanOutbreakActive)
         {
             return;
         }
 
-        isVulcanOutbreakActive = true;
+        _isVulcanOutbreakActive = true;
         ModLogger.LogInfo("[Vulcan] A volcanic outbreak has begun.");
 
         if (PhotonNetwork.InRoom && PhotonNetwork.IsMasterClient)
@@ -88,22 +89,28 @@ public sealed class VulcanStormManager : MonoBehaviourPunCallbacks
             SetRoomOutbreakState(true);
         }
 
-        StartCoroutine(VolcanoEvent.Run());
+        _activeOutbreakCoroutine = StartCoroutine(VolcanoEvent.Run());
     }
 
     public void StopVulcanOutbreak()
     {
-        if (!isVulcanOutbreakActive)
+        if (!_isVulcanOutbreakActive)
         {
             return;
         }
 
-        isVulcanOutbreakActive = false;
+        _isVulcanOutbreakActive = false;
         ModLogger.LogInfo("[Vulcan] The volcanic outbreak has cleared.");
 
         if (PhotonNetwork.InRoom && PhotonNetwork.IsMasterClient)
         {
             SetRoomOutbreakState(false);
+        }
+        
+        if (_activeOutbreakCoroutine != null)
+        {
+            StopCoroutine(_activeOutbreakCoroutine);
+            _activeOutbreakCoroutine = null;
         }
     }
 
@@ -133,7 +140,7 @@ public sealed class VulcanStormManager : MonoBehaviourPunCallbacks
 
     private void ClearLocalState()
     {
-        isVulcanOutbreakActive = false;
+        _isVulcanOutbreakActive = false;
     }
 
     private void SetRoomOutbreakState(bool active)
@@ -150,6 +157,8 @@ public sealed class VulcanStormManager : MonoBehaviourPunCallbacks
 
         PhotonNetwork.CurrentRoom.SetCustomProperties(properties);
     }
-
-  
+    public bool VulcanOutbreakEnabled()
+    {
+        return StonesConfig.EnableVolcanoEvent.Value;
+    }
 }

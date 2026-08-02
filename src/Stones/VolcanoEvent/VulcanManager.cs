@@ -112,6 +112,8 @@ public sealed class VulcanManager : MonoBehaviourPunCallbacks
             StopCoroutine(_activeOutbreakCoroutine);
             _activeOutbreakCoroutine = null;
         }
+        
+        VolcanoEvent.CleanupVisuals();
     }
 
     private void SyncFromRoomProperties()

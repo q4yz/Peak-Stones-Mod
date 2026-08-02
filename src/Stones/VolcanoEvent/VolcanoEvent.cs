@@ -31,7 +31,7 @@ public static class VolcanoEvent
     private static readonly Color StormSunColor     = new Color(1.0f,  0.45f, 0.15f, 1f);
     private const  float         StormSunIntensity = 1.5f;
 
-    private static VolcanoVisuals? _visualEnforcer;
+    
 
     private struct AtmosphereState
     {
@@ -42,6 +42,9 @@ public static class VolcanoEvent
         public float OriginalSunIntensity;
         public bool  OriginalFog;
     }
+    
+    private static VolcanoVisuals? _visualEnforcer;
+    private static AtmosphereState? _originalState;
 
     public static IEnumerator Run()
     {
@@ -55,15 +58,15 @@ public static class VolcanoEvent
         Light? sun = FindMainDirectionalLight();
         _visualEnforcer!.sun = sun;
         _visualEnforcer.enforceEnvironment = true;
-        AtmosphereState originalState = CaptureAtmosphere(sun);
+        _originalState = CaptureAtmosphere(sun);
         
         yield return ExecutePhase1_FadeIn(sun);
         yield return ExecutePhase2_CameraShake();
         yield return ExecutePhase3_Delay();
         yield return ExecutePhase4_StoneRain();
-        yield return ExecutePhase5_FadeOut(sun, originalState);
+        yield return ExecutePhase5_FadeOut(sun, _originalState);
         
-        ExecutePhase6_Cleanup(enforcerObject, originalState);
+        ExecutePhase6_Cleanup();
 
         ModLogger.LogInfo($"[Volcano] === EVENT COMPLETE === Total Time Elapsed: {Time.time - startTime:F2}s");
     }
@@ -105,26 +108,37 @@ public static class VolcanoEvent
         ModLogger.LogInfo("[Volcano] Phase 4 completed.");
     }
 
-    private static IEnumerator ExecutePhase5_FadeOut(Light? sun, AtmosphereState state)
+    private static IEnumerator ExecutePhase5_FadeOut(Light? sun, AtmosphereState? state)
     {
+        if (state is not AtmosphereState validState)
+        {
+            yield break;
+        }
         ModLogger.LogInfo($"[Volcano] Phase 5 (Fade Out) starting. Expected duration: {FadeOutDuration}s");
-        yield return FadeEnvironment(sun, state.OriginalAmbient, state.OriginalFogColor, state.OriginalFogDensity, state.OriginalSunColor, state.OriginalSunIntensity, FadeOutDuration);
+        yield return FadeEnvironment(sun, validState.OriginalAmbient, validState.OriginalFogColor, validState.OriginalFogDensity, validState.OriginalSunColor, validState.OriginalSunIntensity, FadeOutDuration);
         ModLogger.LogInfo("[Volcano] Phase 5 completed.");
     }
 
-    private static void ExecutePhase6_Cleanup(GameObject enforcerObject, AtmosphereState state)
+    private static void ExecutePhase6_Cleanup()
     {
         ModLogger.LogInfo("[Volcano] Phase 6 (Cleanup) starting...");
+        VulcanManager.EnsureInstance().StopVulcanOutbreak();
+    }
+    
+    public static void CleanupVisuals()
+    {
+        ModLogger.LogInfo("[Volcano] Cleaning up visuals...");
 
-        if (enforcerObject != null)
+        if (_visualEnforcer != null)
         {
-            Object.Destroy(enforcerObject);
+            Object.Destroy(_visualEnforcer);
             _visualEnforcer = null; 
         }
 
-        RenderSettings.fog = state.OriginalFog;
-
-        VulcanManager.EnsureInstance().StopVulcanOutbreak();
+        if (_originalState != null)
+        {
+            RenderSettings.fog = _originalState.Value.OriginalFog;
+        }
     }
 
     private static GameObject CreateVisualEnforcer()

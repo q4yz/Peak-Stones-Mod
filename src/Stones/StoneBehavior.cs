@@ -4,14 +4,43 @@ using UnityEngine;
 namespace Stones;
 
 [RequireComponent(typeof(PhotonView))]
+[RequireComponent(typeof(global::Item))]
 public class StoneBehavior : MonoBehaviourPun
 {
-    private float lastHitTime = -1f;
-
-    private void OnCollisionEnter(Collision collision)
+    private float _lastHitTime = -1f;
+    private ItemState _previousState;
+    private float _timeBecameGrounded = -1f;
+    private int _throwerActorNumber = -1;
+     required public global::Item stoneItem;
+    
+    
+    private void Awake()
     {
-        var stoneItem = GetComponent<global::Item>();
-        if (stoneItem == null) return;
+        stoneItem = GetComponent<global::Item>();
+        
+        if (stoneItem == null)
+        {
+            ModLogger.LogError($"[Stone] Missing Item component on {gameObject.name}! Destroying StoneBehavior.");
+            Destroy(this); 
+        }
+    }
+
+    private void Update()
+    {
+        if (stoneItem.itemState != _previousState)
+        {
+            if (stoneItem.itemState == ItemState.Ground)
+            {
+                _timeBecameGrounded = Time.time;
+                _throwerActorNumber = photonView.OwnerActorNr; 
+            }
+            _previousState = stoneItem.itemState;
+        }
+    }
+
+   private void OnCollisionEnter(Collision collision)
+    {
+        
         
         if (stoneItem.itemState != ItemState.Ground) return;
         
@@ -21,12 +50,16 @@ public class StoneBehavior : MonoBehaviourPun
         Character victim = hitPart.GetComponentInParent<Character>();
         if (victim == null) return;
         
+        float timeInAir = Time.time - _timeBecameGrounded;
+        bool isThrower = (victim.photonView.OwnerActorNr == _throwerActorNumber);
+        
+        if (isThrower && timeInAir < 1.0f) return;
 
         float impactSpeed = collision.relativeVelocity.magnitude;
 
         if (victim.photonView.IsMine)
         {
-            if (Time.time - lastHitTime < 1.0f) return;
+            if (Time.time - _lastHitTime < 1.0f) return;
 
             float weight = stoneItem.CarryWeight;
             if (weight <= 4f) return;
@@ -37,7 +70,7 @@ public class StoneBehavior : MonoBehaviourPun
 
             if (damageAmount > 0f)
             {
-                lastHitTime = Time.time;
+                _lastHitTime = Time.time;
                 try
                 {
                     victim.refs.afflictions.AddStatus(
@@ -78,7 +111,6 @@ public class StoneBehavior : MonoBehaviourPun
 
     private string GetItemStateString()
     {
-        var item = GetComponent<global::Item>();
-        return item != null ? item.itemState.ToString() : "(no Item)";
+        return  stoneItem.itemState.ToString() ;
     }
 }

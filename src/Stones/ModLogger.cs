@@ -1,15 +1,9 @@
 ﻿namespace Stones;
+using System.Diagnostics;
 
 public static class ModLogger
 {
     
-    private static bool ShouldLog(LogLevel level)
-    {
-        if (!StonesConfig.EnableDebugLogging.Value)
-            return false;
-
-        return StonesConfig.MinLogLevel.Value <= level;
-    }
     
     public static void LogDebug(object message)
     {

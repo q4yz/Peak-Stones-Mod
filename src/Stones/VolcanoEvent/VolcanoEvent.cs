@@ -94,17 +94,44 @@ public static class VolcanoEvent
 
     private static IEnumerator ExecutePhase4_StoneRain()
     {
-        ModLogger.LogInfo($"[Volcano] Phase 4 (Stone Rain) starting.");
+        if (!IsMaster()) 
+        {
+            yield break; 
+        }
 
-        float dropRate = GetSafeDropRate();
+        float baseDropRate = GetSafeDropRate();
         int burstCount = Mathf.Max(1, StonesConfig.VulcanStoneBurstCount.Value);
         int itemsToDrop = StonesConfig.VolcanoMaxStones.Value;
+        
+        LayerMask groundMask = LayerMask.GetMask("Terrain", "Map");
+        float skySpawnHeight = 4000f;
+        float raycastMaxDistance = 5000f;
 
+        int playerIndex = 0;
+        
         for (int i = 0; i < itemsToDrop; i += burstCount)
         {
-            SpawnVulcanStoneBurst();
-            yield return new WaitForSeconds(dropRate);
+            Player[] allPlayers = Object.FindObjectsByType<Player>(FindObjectsSortMode.None);
+            if (allPlayers.Length == 0)
+            {
+                yield return new WaitForSeconds(baseDropRate);
+                continue;
+            }
+            float interval = baseDropRate / allPlayers.Length;
+            playerIndex = playerIndex % allPlayers.Length;
+            Player targetPlayer = allPlayers[playerIndex];
+
+            if (targetPlayer != null && targetPlayer.character != null)
+            {
+                for (int j = 0; j < burstCount; j++)
+                {
+                    SpawnStoneAbovePlayer(targetPlayer, groundMask, skySpawnHeight, raycastMaxDistance);
+                }
+            }
+            playerIndex++;
+            yield return new WaitForSeconds(interval);
         }
+
         ModLogger.LogInfo("[Volcano] Phase 4 completed.");
     }
 
@@ -163,8 +190,8 @@ public static class VolcanoEvent
         explosionAudio.loop = false;
         explosionAudio.volume = 0.4f;     
 
-        AudioClip fireClip = Plugin.peakBundle.LoadAsset<AudioClip>("Au_Fire_Loop");
-        AudioClip explosionClip = Plugin.peakBundle.LoadAsset<AudioClip>("Au_Explosion_Debris");
+        AudioClip fireClip = Plugin.PeakBundle.LoadAsset<AudioClip>("Au_Fire_Loop");
+        AudioClip explosionClip = Plugin.PeakBundle.LoadAsset<AudioClip>("Au_Explosion_Debris");
         
         if (fireClip != null)
         {
@@ -209,35 +236,40 @@ public static class VolcanoEvent
 
     private static Vector3 ComputeBurstSpawnPosition(Vector3 playerCenter)
     {
-        float offsetX = Random.Range(-6f, 6f);
-        float offsetZ = Random.Range(-6f, 6f);
+        float offsetX = Random.Range(-8f, 8f);
+        float offsetZ = Random.Range(-8f, 8f);
         return playerCenter + new Vector3(offsetX, 18f, offsetZ);
     }
-    
-    private static void SpawnVulcanStoneBurst()
+
+    private static void SpawnStoneAbovePlayer(Player p, LayerMask groundMask, float skyHeight, float maxDistance)
     {
-        if (!PhotonNetwork.IsMasterClient) return;
+        Vector3 basePos = ComputeBurstSpawnPosition(p.character.Center);
+        
+        Vector3 skyPos = new Vector3(basePos.x, skyHeight, basePos.z);
+        
+        float terrainHeight = p.character.Center.y;
 
-        int burstCount = Mathf.Max(1, StonesConfig.VulcanStoneBurstCount.Value);
-        Player[] allPlayers = Object.FindObjectsByType<Player>(FindObjectsSortMode.None);
-
-        foreach (Player p in allPlayers)
+        if (Physics.Raycast(skyPos, Vector3.down, out RaycastHit hit, maxDistance, groundMask.value,
+                QueryTriggerInteraction.Ignore))
         {
-            if (p == null || p.character == null) continue;
+            terrainHeight = hit.point.y;
+        }
+        
+        float requiredTerrainHeight = terrainHeight + 30f;
+        float requiredPlayerHeight = p.character.Center.y + 60f;
+        
+        float spawnY = Mathf.Max(requiredTerrainHeight, requiredPlayerHeight);
 
-            for (int i = 0; i < burstCount; i++)
-            {
-                Vector3 spawnPosition = ComputeBurstSpawnPosition(p.character.Center);
-                GameObject? stone = ItemSpawnHelper.SpawnRandomStormStone(spawnPosition, Random.rotation);
-                
-                if (stone == null)
-                {
-                    ModLogger.LogWarning($"[Vulcan] Burst stone {i + 1}/{burstCount} failed to spawn.");
-                }
-            }
+        Vector3 finalSpawnPosition = new Vector3(basePos.x, spawnY, basePos.z);
+        
+        GameObject? stone = ItemSpawnHelper.SpawnRandomStormStone(finalSpawnPosition, Random.rotation);
+
+        if (stone == null)
+        {
+            ModLogger.LogWarning($"[Vulcan] Burst stone failed to spawn above player {p.name}.");
         }
     }
-    
+
     private static AtmosphereState CaptureAtmosphere(Light? sun)
     {
         return new AtmosphereState
@@ -322,5 +354,10 @@ public static class VolcanoEvent
             }
         }
         return best;
+    }
+
+    private static bool IsMaster()
+    {
+        return PhotonNetwork.IsMasterClient;
     }
 }

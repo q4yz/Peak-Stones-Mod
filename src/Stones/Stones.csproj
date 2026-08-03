@@ -11,6 +11,21 @@
     <Version>0.1.3</Version>
   </PropertyGroup>
 
+  <!-- This block ONLY applies when you build in Debug mode -->
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <!-- This creates the #if DEBUG symbol -->
+    <DefineConstants>DEBUG</DefineConstants>
+    <Optimize>false</Optimize>
+  </PropertyGroup>
+
+  <!-- This block ONLY applies when you build in Release mode -->
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <!-- We leave DefineConstants empty so the DEBUG symbol is erased -->
+    <DefineConstants></DefineConstants>
+    <!-- Optimize=true tells the compiler to make the code run faster -->
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
   <!-- ThunderPipe properties -->
   <PropertyGroup>
     <!-- Whether or not this project should build a Thunderstore package. -->

@@ -7,8 +7,6 @@ using PEAKLib.Items;
 using PEAKLib.Items.UnityEditor;
 using UnityEngine;
 using Photon.Pun;
-using PEAKLib.ModConfig;
-
 
 namespace Stones;
 
@@ -23,7 +21,7 @@ public partial class Plugin : BaseUnityPlugin
  
     internal static string ModId { get; private set; } = null!;
     
-    public static PeakBundle peakBundle { get; private set; } = null!;
+    public static PeakBundle PeakBundle { get; private set; } = null!;
     private const string BundleFileName = "stones.peakbundle";
     
 
@@ -71,7 +69,7 @@ public partial class Plugin : BaseUnityPlugin
     
     private void RegisterStonesContent(PeakBundle peakBundle)
     {
-        Plugin.peakBundle = peakBundle;
+        Plugin.PeakBundle = peakBundle;
         ModLogger.LogInfo($"[Stones] Registering stone content from '{BundleFileName}'...");
         
         void ProcessTierList(StonesItem[] tiers, Action<UnityItemContent, string> attachBehaviors)
@@ -112,9 +110,6 @@ public partial class Plugin : BaseUnityPlugin
         content = peakBundle.LoadAsset<UnityItemContent>("GrenadeContent");
         AttachBehavior<GrenadeCookBehavior>(content, "GrenadeContent");
         
-        
-        
-        
         ProcessTierList(OtherItems, (content, name) => { });
 
         // "0_Items/{mod.Id}:{item.name}".
@@ -149,9 +144,11 @@ public partial class Plugin : BaseUnityPlugin
 
     private void Update()
     {
+        #if DEBUG
         if (Input.GetKeyDown(KeyCode.F2)) HandleF2();
         if (Input.GetKeyDown(KeyCode.F3)) HandleF3();
         if (Input.GetKeyDown(KeyCode.F4)) HandleF4();
+        #endif
     }
 
     /// <summary>

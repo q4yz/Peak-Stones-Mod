@@ -9,7 +9,6 @@ public enum LogLevel
     Info = 1,
     Warning = 2,
     Error = 3,
-    None = 4 // Use this to completely disable logging
 }
 
 /// <summary>
@@ -19,10 +18,7 @@ public enum LogLevel
 /// </summary>
 public static class StonesConfig
 {
-    public static ConfigEntry<bool> EnableDebugLogging{ get; private set; } = null!;
-    public static ConfigEntry<bool> EnableDebug{ get; private set; } = null!;
     public static ConfigEntry<LogLevel> MinLogLevel{ get; private set; } = null!;
-    
     
     public static ConfigEntry<int> MaxStones { get; private set; } = null!;
     public static ConfigEntry<bool> EnableGrenades { get; private set; } = null!;
@@ -34,23 +30,9 @@ public static class StonesConfig
     public static ConfigEntry<int> VulcanStoneBurstCount { get; private set; } = null!;
     public static ConfigEntry<float> StoneRainDropRate { get; private set; } = null!;
 
-   
     
     public static void Bind(ConfigFile config)
     {
-        
-        EnableDebugLogging = config.Bind(
-            "Debug", "Enable Logging", true, 
-            "If true, enables detailed debug logging in the console.");
-        
-        
-        EnableDebug = config.Bind(
-            "Debug", "Enable Debug", true, 
-            "If true, enables debug commands.");
-        
-        MinLogLevel = config.Bind(
-            "Debug", "Minimum Log Level", LogLevel.None,
-            "Minimum severity level of logs to display in the console. Options: Debug, Info, Warning, Error, None.");
         
         MaxStones = config.Bind(
             "1. Spawning", "Max Stones", 700,
@@ -66,7 +48,10 @@ public static class StonesConfig
         
         VulcanOutbreakChance = config.Bind(
             "2. Events", "Vulcan Outbreak Chance", 1.0f,
-            "Chance for a normal storm start to become a volcanic outbreak.");
+            new ConfigDescription(
+                "Chance for a normal storm start to become a volcanic outbreak. (0.0 = 0%, 0.5 = 50%, 1.0 = 100%)", 
+                new AcceptableValueRange<float>(0.0f, 1.0f)
+            ));
         
         VulcanStoneBurstCount = config.Bind(
             "2. Events", "Vulcan Stone Burst Count", 5,
@@ -79,6 +64,10 @@ public static class StonesConfig
         EnableGrenades = config.Bind(
             "1. Spawning", "Enable Grenades", true, 
             "If true, grenades are allowed to spawn in chests/world.");
+        
+        MinLogLevel = config.Bind(
+            "Logging", "Minimum Log Level", LogLevel.Error,
+            "Minimum severity level of logs to display in the console. Options: Debug, Info, Warning, Error, None.");
        
     }
 }
